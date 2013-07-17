@@ -27,13 +27,20 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.AsyncTask;
 import android.os.IBinder;
+import android.support.v4.app.NotificationCompat;
 import android.util.Log;
+
+import com.google.analytics.tracking.android.GoogleAnalytics;
+import com.google.analytics.tracking.android.Tracker;
 
 public class ReportingService extends Service {
 
@@ -46,17 +53,26 @@ public class ReportingService extends Service {
 
     @Override
     public int onStartCommand (Intent intent, int flags, int startId) {
-    	Log.d(Utilities.TAG, "User has opted in -- reporting.");
-
-		String RomStatsUrl = Utilities.getStatsUrl();
-		if (RomStatsUrl == null || RomStatsUrl.isEmpty()) {
-			Log.e(Utilities.TAG, "This ROM is not configured for ROM Statistics.");
-			stopSelf();
-		}
-    	
-        if (mTask == null || mTask.getStatus() == AsyncTask.Status.FINISHED) {
-            mTask = new StatsUploadTask();
-            mTask.execute();
+    	boolean canReport = true;
+        if (intent.getBooleanExtra("promptUser", false)) {
+        	Log.d(Utilities.TAG, "Prompting user for opt-in.");
+            promptUser();
+            canReport = false;
+        }
+        
+        String RomStatsUrl = Utilities.getStatsUrl();
+        if (RomStatsUrl == null || RomStatsUrl.isEmpty()) {
+        	Log.e(Utilities.TAG, "This ROM is not configured for ROM Statistics.");
+        	canReport = false;
+        }
+        
+        if (canReport) {
+	    	Log.d(Utilities.TAG, "User has opted in -- reporting.");
+	    	
+	        if (mTask == null || mTask.getStatus() == AsyncTask.Status.FINISHED) {
+	            mTask = new StatsUploadTask();
+	            mTask.execute();
+	        }
         }
 
         return Service.START_REDELIVER_INTENT;
@@ -86,6 +102,16 @@ public class ReportingService extends Service {
     		Log.d(Utilities.TAG, "SERVICE: ROM Name=" + RomName);
     		Log.d(Utilities.TAG, "SERVICE: ROM Version=" + RomVersion);
 
+			if (Utilities.getGaTracking() != null) {
+				Log.d(Utilities.TAG, "Reporting to Google Analytics is enabled");
+				
+				GoogleAnalytics ga = GoogleAnalytics.getInstance(ReportingService.this);
+				Tracker tracker = ga.getTracker(Utilities.getGaTracking());
+				tracker.sendEvent(deviceName, deviceVersion, deviceCountry, null);
+				tracker.sendEvent("checkin", deviceName, RomVersion, null);
+				tracker.close();
+			}
+    		
             // report to the cmstats service
             HttpClient httpClient = new DefaultHttpClient();
             HttpPost httpPost = new HttpPost(RomStatsUrl + "submit");
@@ -114,24 +140,42 @@ public class ReportingService extends Service {
         }
         
         @Override
-        protected void onPostExecute(Boolean result) {
-            final Context context = ReportingService.this;
-            long interval;
+		protected void onPostExecute(Boolean result) {
+			final Context context = ReportingService.this;
+			long interval;
 
-            if (result) {
-                final SharedPreferences prefs = AnonymousStats.getPreferences(context);
-                prefs.edit().putLong(AnonymousStats.ANONYMOUS_LAST_CHECKED,
-                        System.currentTimeMillis()).apply();
-                // use set interval
-                interval = 0;
-            } else {
-                // error, try again in 3 hours
-                interval = 3L * 60L * 60L * 1000L;
-            }
+			if (result) {
+				final SharedPreferences prefs = AnonymousStats.getPreferences(context);
+				prefs.edit().putLong(AnonymousStats.ANONYMOUS_LAST_CHECKED, System.currentTimeMillis()).apply();
+				// use set interval
+				interval = 0;
+			} else {
+				// error, try again in 3 hours
+				interval = 3L * 60L * 60L * 1000L;
+			}
 
-            ReportingServiceManager.setAlarm(context, interval);
-            stopSelf();
-        }
-    }
-        
+			ReportingServiceManager.setAlarm(context, interval);
+			stopSelf();
+		}
+	}
+
+	private void promptUser() {
+		NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+
+		Intent mainActivity = new Intent(getApplicationContext(), AnonymousStats.class);
+		PendingIntent pendingIntent = PendingIntent.getActivity(getApplicationContext(), 0, mainActivity, 0);
+
+		Notification notification = new NotificationCompat.Builder(getBaseContext())
+				.setSmallIcon(R.drawable.ic_launcher)
+				.setTicker(getString(R.string.notification_ticker))
+				.setContentTitle(getString(R.string.notification_title))
+				.setContentText(getString(R.string.notification_desc))
+				.setWhen(System.currentTimeMillis())
+				.setContentIntent(pendingIntent)
+				.setAutoCancel(true)
+				.build();
+
+		nm.notify(Utilities.NOTIFICATION_ID, notification);
+	}
+ 
 }

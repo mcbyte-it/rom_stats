@@ -28,6 +28,7 @@ import android.telephony.TelephonyManager;
 public class Utilities {
 	public static final String SETTINGS_PREF_NAME = "ROMStats";
 	public static final String TAG = "ROMStats";
+	public static final int NOTIFICATION_ID = 1;
 
 	// For the Unique ID, I still use the IMEI or WiFi MAC address
 	// CyanogenMod switched to use the Settings.Secure.ANDROID_ID
@@ -120,4 +121,33 @@ public class Utilities {
 			return null;
 		}
 	}
+	
+	public static String getGaTracking() {
+		String gaTracking = SystemProperties.get("ro.romstats.ga");
+		
+		if (gaTracking.isEmpty()) {
+			return null;
+		}
+		
+		return gaTracking;
+	}
+	
+	/**
+	 * Gets the Ask First value
+	 * 0: RomStats will behave like CMStats, starts reporting automatically after the tframe (default)
+	 * 1: RomStats will behave like the old CMStats, asks the user on first boot
+	 * 
+	 * @return boolean
+	 */
+	public static boolean askFirstBoot() {
+		String askFirst = SystemProperties.get("ro.romstats.askfirst", "0");
+		
+		if ("0".equals(askFirst)) {
+			return false;
+		} else {
+			return true;
+		}
+	}
+	
+	
 }

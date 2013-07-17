@@ -22,7 +22,14 @@
     <CheckBoxPreference
         android:key="pref_anonymous_opt_in"
         android:defaultValue="true"
-        android:title="@string/enable_reporting_title" />
+        android:title="@string/enable_reporting_title"
+        android:disableDependentsState="true" />
+    
+    <CheckBoxPreference
+        android:key="pref_anonymous_opt_out_persist"
+        android:defaultValue="false"
+        android:title="@string/disable_reporting_persistent"
+        android:dependency="pref_anonymous_opt_in" />
     
     <PreferenceScreen
         android:title="@string/preview_data_title">

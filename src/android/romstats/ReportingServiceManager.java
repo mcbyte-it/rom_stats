@@ -16,8 +16,6 @@
 
 package android.romstats;
 
-import java.io.File;
-
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -26,8 +24,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
-import android.os.Environment;
-import android.preference.PreferenceManager;
 import android.util.Log;
 
 public class ReportingServiceManager extends BroadcastReceiver {
@@ -41,35 +37,16 @@ public class ReportingServiceManager extends BroadcastReceiver {
 	@Override
 	public void onReceive(Context context, Intent intent) {
 		if (intent.getAction().equals(Intent.ACTION_BOOT_COMPLETED)) {
-			Log.d(Utilities.TAG, "[onReceive] BOOT_COMPLETED");
+			Log.d(Const.TAG, "[onReceive] BOOT_COMPLETED");
 			
-			SharedPreferences prefs = AnonymousStats.getPreferences(context);
-			
-			Log.d(Utilities.TAG, "[onReceive] Check prefs exist: " + prefs.contains(AnonymousStats.ANONYMOUS_OPT_IN));
-			if (!prefs.contains(AnonymousStats.ANONYMOUS_OPT_IN)) {
-				Log.d(Utilities.TAG, "[onReceive] New install, check 'persistent cookie' on Boot");
-				
-				File sdCard = Environment.getExternalStorageDirectory();
-				File dir = new File (sdCard.getAbsolutePath() + "/.ROMStats");
-				File cookieFile = new File(dir, "optout");
-				
-				if (cookieFile.exists()) {
-					Log.d(Utilities.TAG, "[onReceive] persistent cookie exists, Disable everything");
-					
-					prefs.edit().putBoolean(AnonymousStats.ANONYMOUS_OPT_IN, false).apply();
-					prefs.edit().putBoolean(AnonymousStats.ANONYMOUS_FIRST_BOOT, false).apply();
-					
-					SharedPreferences mainPrefs = PreferenceManager.getDefaultSharedPreferences(context);
-					mainPrefs.edit().putBoolean(AnonymousStats.ANONYMOUS_OPT_IN, false).apply();
-					mainPrefs.edit().putBoolean(AnonymousStats.ANONYMOUS_OPT_OUT_PERSIST, true).apply();
-					
-					return;
-				}
-			};
+			Utilities.checkIconVisibility(context);
+			if (Utilities.persistentOptOut(context)) {
+				return;
+			}
 			
 			setAlarm(context, 0);
 		} else {
-			Log.d(Utilities.TAG, "[onReceive] CONNECTIVITY_CHANGE");
+			Log.d(Const.TAG, "[onReceive] CONNECTIVITY_CHANGE");
 			launchService(context);
 		}
 	}
@@ -78,16 +55,15 @@ public class ReportingServiceManager extends BroadcastReceiver {
 		SharedPreferences prefs = AnonymousStats.getPreferences(context);
 		
         //prefs.edit().putBoolean(AnonymousStats.ANONYMOUS_ALARM_SET, false).apply();
-		
 		//boolean firstBoot = prefs.getBoolean(AnonymousStats.ANONYMOUS_FIRST_BOOT, true);
 		
-		// get OPT_IN pref, defaults to true (new behavior)
-		boolean optedIn = prefs.getBoolean(AnonymousStats.ANONYMOUS_OPT_IN, true);
+		// get ANONYMOUS_OPT_IN pref, defaults to true (new behavior)
+		boolean optedIn = prefs.getBoolean(Const.ANONYMOUS_OPT_IN, true);
 
 		// If we want the old behavior, re-read OPT_IN but default to false 
-		if (Utilities.askFirstBoot()) {
-			optedIn = prefs.getBoolean(AnonymousStats.ANONYMOUS_OPT_IN, false);
-			Log.d(Utilities.TAG, "[setAlarm] AskFirstBoot, optIn=" + optedIn);
+		if (Utilities.getReportingMode() == Const.ROMSTATS_REPORTING_MODE_OLD) {
+			optedIn = prefs.getBoolean(Const.ANONYMOUS_OPT_IN, false);
+			Log.d(Const.TAG, "[setAlarm] AskFirstBoot, optIn=" + optedIn);
 		}
         
 		if (!optedIn) {
@@ -97,48 +73,49 @@ public class ReportingServiceManager extends BroadcastReceiver {
 		long UPDATE_INTERVAL = Long.valueOf(Utilities.getTimeFrame()) * MILLIS_PER_DAY;
 
 		if (millisFromNow <= 0) {
-			long lastSynced = prefs.getLong(AnonymousStats.ANONYMOUS_LAST_CHECKED, 0);
+			long lastSynced = prefs.getLong(Const.ANONYMOUS_LAST_CHECKED, 0);
 			if (lastSynced == 0) {
 				// never synced, so let's fake out that the last sync was just now.
 				// this will allow the user tFrame time to opt out before it will start
 				// sending up anonymous stats.
 				lastSynced = System.currentTimeMillis();
-				prefs.edit().putLong(AnonymousStats.ANONYMOUS_LAST_CHECKED, lastSynced).apply();
-				Log.d(Utilities.TAG, "[setAlarm] Set alarm for first sync.");
+				prefs.edit().putLong(Const.ANONYMOUS_LAST_CHECKED, lastSynced).apply();
+				Log.d(Const.TAG, "[setAlarm] Set alarm for first sync.");
 			}
 			millisFromNow = (lastSynced + UPDATE_INTERVAL) - System.currentTimeMillis();
 		}
 
 		Intent intent = new Intent(ConnectivityManager.CONNECTIVITY_ACTION);
 		intent.setClass(context, ReportingServiceManager.class);
+		
+		long nextAlarm = System.currentTimeMillis() + millisFromNow;
 
 		AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-		alarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + millisFromNow,
-				PendingIntent.getBroadcast(context, 0, intent, 0));
-		Log.d(Utilities.TAG, "[setAlarm] Next sync attempt in : " + millisFromNow / MILLIS_PER_HOUR + " hours");
+		alarmManager.set(AlarmManager.RTC_WAKEUP, nextAlarm, PendingIntent.getBroadcast(context, 0, intent, 0));
+		Log.d(Const.TAG, "[setAlarm] Next sync attempt in : " + millisFromNow / MILLIS_PER_HOUR + " hours");
 		
-        //prefs.edit().putBoolean(AnonymousStats.ANONYMOUS_ALARM_SET, true).apply();
+        prefs.edit().putLong(Const.ANONYMOUS_NEXT_ALARM, nextAlarm).apply();
 	}
 
 	public static void launchService(Context context) {
 		ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
 
 		NetworkInfo networkInfo = cm.getActiveNetworkInfo();
-		Log.d(Utilities.TAG, "[launchService] networkInfo: " + networkInfo);
+		Log.d(Const.TAG, "[launchService] networkInfo: " + networkInfo);
 		if (networkInfo == null || !networkInfo.isConnected()) {
 			return;
 		}
 		
 		SharedPreferences prefs = AnonymousStats.getPreferences(context);
 		
-		boolean optedIn = prefs.getBoolean(AnonymousStats.ANONYMOUS_OPT_IN, true);
+		boolean optedIn = prefs.getBoolean(Const.ANONYMOUS_OPT_IN, true);
 		if (!optedIn) {
 			return;
 		}
 		
-		boolean firstBoot = prefs.getBoolean(AnonymousStats.ANONYMOUS_FIRST_BOOT, true);
-		if (Utilities.askFirstBoot() && firstBoot) {
-			Log.d(Utilities.TAG, "[launchService] AskUserFirst & firstBoot -> prompt user");
+		boolean firstBoot = prefs.getBoolean(Const.ANONYMOUS_FIRST_BOOT, true);
+		if (firstBoot && Utilities.getReportingMode() == Const.ROMSTATS_REPORTING_MODE_OLD) {
+			Log.d(Const.TAG, "[launchService] MODE=1 & firstBoot -> prompt user");
 			
 			// promptUser is called through a service because it cannot be called from a BroadcastReceiver
 			Intent intent = new Intent();
@@ -148,17 +125,23 @@ public class ReportingServiceManager extends BroadcastReceiver {
 			return;
 		}
 		
-		long lastSynced = prefs.getLong(AnonymousStats.ANONYMOUS_LAST_CHECKED, 0);
+		long lastSynced = prefs.getLong(Const.ANONYMOUS_LAST_CHECKED, 0);
 		if (lastSynced == 0) {
 			setAlarm(context, 0);
 			return;
+		}
+		
+		String lastReportedVersion = prefs.getString(Const.ANONYMOUS_LAST_REPORT_VERSION, null);
+		if (!Utilities.getRomVersionHash().equals(lastReportedVersion)) {
+			// if rom version has changed since last reporting, do an immediate reporting
+			lastSynced = 1;
 		}
 		
 		long UPDATE_INTERVAL = Long.valueOf(Utilities.getTimeFrame()) * MILLIS_PER_DAY;
 		
 		long timeLeft = System.currentTimeMillis() - lastSynced;
 		if (timeLeft < UPDATE_INTERVAL) {
-			Log.d(Utilities.TAG, "Waiting for next sync : " + timeLeft / MILLIS_PER_HOUR + " hours");
+			Log.d(Const.TAG, "Waiting for next sync : " + timeLeft / MILLIS_PER_HOUR + " hours");
 			return;
 		}
 

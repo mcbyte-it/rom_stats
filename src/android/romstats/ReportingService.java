@@ -55,19 +55,19 @@ public class ReportingService extends Service {
     public int onStartCommand (Intent intent, int flags, int startId) {
     	boolean canReport = true;
         if (intent.getBooleanExtra("promptUser", false)) {
-        	Log.d(Utilities.TAG, "Prompting user for opt-in.");
+        	Log.d(Const.TAG, "Prompting user for opt-in.");
             promptUser();
             canReport = false;
         }
         
         String RomStatsUrl = Utilities.getStatsUrl();
         if (RomStatsUrl == null || RomStatsUrl.isEmpty()) {
-        	Log.e(Utilities.TAG, "This ROM is not configured for ROM Statistics.");
+        	Log.e(Const.TAG, "This ROM is not configured for ROM Statistics.");
         	canReport = false;
         }
         
         if (canReport) {
-	    	Log.d(Utilities.TAG, "User has opted in -- reporting.");
+	    	Log.d(Const.TAG, "User has opted in -- reporting.");
 	    	
 	        if (mTask == null || mTask.getStatus() == AsyncTask.Status.FINISHED) {
 	            mTask = new StatsUploadTask();
@@ -87,34 +87,36 @@ public class ReportingService extends Service {
     		String deviceCountry = Utilities.getCountryCode(getApplicationContext());
     		String deviceCarrier = Utilities.getCarrier(getApplicationContext());
     		String deviceCarrierId = Utilities.getCarrierId(getApplicationContext());
-    		String RomName = Utilities.getRomName();
-    		String RomVersion = Utilities.getRomVersion();
+    		String romName = Utilities.getRomName();
+    		String romVersion = Utilities.getRomVersion();
+    		String romStatsSignCert = Utilities.getSigningCert(getApplicationContext());
 
-    		String RomStatsUrl = Utilities.getStatsUrl();
+    		String romStatsUrl = Utilities.getStatsUrl();
     		
-    		Log.d(Utilities.TAG, "SERVICE: Report URL=" + RomStatsUrl);
-    		Log.d(Utilities.TAG, "SERVICE: Device ID=" + deviceId);
-    		Log.d(Utilities.TAG, "SERVICE: Device Name=" + deviceName);
-    		Log.d(Utilities.TAG, "SERVICE: Device Version=" + deviceVersion);
-    		Log.d(Utilities.TAG, "SERVICE: Country=" + deviceCountry);
-    		Log.d(Utilities.TAG, "SERVICE: Carrier=" + deviceCarrier);
-    		Log.d(Utilities.TAG, "SERVICE: Carrier ID=" + deviceCarrierId);
-    		Log.d(Utilities.TAG, "SERVICE: ROM Name=" + RomName);
-    		Log.d(Utilities.TAG, "SERVICE: ROM Version=" + RomVersion);
+    		Log.d(Const.TAG, "SERVICE: Report URL=" + romStatsUrl);
+    		Log.d(Const.TAG, "SERVICE: Device ID=" + deviceId);
+    		Log.d(Const.TAG, "SERVICE: Device Name=" + deviceName);
+    		Log.d(Const.TAG, "SERVICE: Device Version=" + deviceVersion);
+    		Log.d(Const.TAG, "SERVICE: Country=" + deviceCountry);
+    		Log.d(Const.TAG, "SERVICE: Carrier=" + deviceCarrier);
+    		Log.d(Const.TAG, "SERVICE: Carrier ID=" + deviceCarrierId);
+    		Log.d(Const.TAG, "SERVICE: ROM Name=" + romName);
+    		Log.d(Const.TAG, "SERVICE: ROM Version=" + romVersion);
+    		Log.d(Const.TAG, "SERVICE: Sign Cert=" + romStatsSignCert);
 
 			if (Utilities.getGaTracking() != null) {
-				Log.d(Utilities.TAG, "Reporting to Google Analytics is enabled");
+				Log.d(Const.TAG, "Reporting to Google Analytics is enabled");
 				
 				GoogleAnalytics ga = GoogleAnalytics.getInstance(ReportingService.this);
 				Tracker tracker = ga.getTracker(Utilities.getGaTracking());
 				tracker.sendEvent(deviceName, deviceVersion, deviceCountry, null);
-				tracker.sendEvent("checkin", deviceName, RomVersion, null);
+				tracker.sendEvent("checkin", deviceName, romVersion, null);
 				tracker.close();
 			}
     		
             // report to the cmstats service
             HttpClient httpClient = new DefaultHttpClient();
-            HttpPost httpPost = new HttpPost(RomStatsUrl + "submit");
+            HttpPost httpPost = new HttpPost(romStatsUrl + "submit");
             boolean success = false;
 
             try {
@@ -125,15 +127,16 @@ public class ReportingService extends Service {
     			kv.add(new BasicNameValuePair("device_country", deviceCountry));
     			kv.add(new BasicNameValuePair("device_carrier", deviceCarrier));
     			kv.add(new BasicNameValuePair("device_carrier_id", deviceCarrierId));
-    			kv.add(new BasicNameValuePair("rom_name", RomName));
-    			kv.add(new BasicNameValuePair("rom_version", RomVersion));
+    			kv.add(new BasicNameValuePair("rom_name", romName));
+    			kv.add(new BasicNameValuePair("rom_version", romVersion));
+    			kv.add(new BasicNameValuePair("sign_cert", romStatsSignCert));
 
                 httpPost.setEntity(new UrlEncodedFormEntity(kv));
                 httpClient.execute(httpPost);
 
                 success = true;
             } catch (IOException e) {
-                Log.w(Utilities.TAG, "Could not upload stats checkin", e);
+                Log.w(Const.TAG, "Could not upload stats checkin", e);
             }
 
             return success;
@@ -146,8 +149,14 @@ public class ReportingService extends Service {
 
 			if (result) {
 				final SharedPreferences prefs = AnonymousStats.getPreferences(context);
-				prefs.edit().putLong(AnonymousStats.ANONYMOUS_LAST_CHECKED, System.currentTimeMillis()).apply();
-				// use set interval
+
+				// save the current date for future checkins
+				prefs.edit().putLong(Const.ANONYMOUS_LAST_CHECKED, System.currentTimeMillis()).apply();
+				
+				// save a hashed rom version (used to to an immediate checkin in case of new rom version
+	    		prefs.edit().putString(Const.ANONYMOUS_LAST_REPORT_VERSION, Utilities.getRomVersionHash()).apply();
+
+				// set interval = 0; this causes setAlarm to schedule next report after UPDATE_INTERVAL
 				interval = 0;
 			} else {
 				// error, try again in 3 hours

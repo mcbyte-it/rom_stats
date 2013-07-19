@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="android.romstats"
     android:versionCode="3"
-    android:versionName="1.6b" >
+    android:versionName="2.0-beta" >
 
 	<uses-sdk
 		android:minSdkVersion="9"
